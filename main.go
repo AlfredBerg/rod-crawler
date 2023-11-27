@@ -15,8 +15,8 @@ import (
 
 func main() {
 
-	target := "https://www.swisscom.ch/"
-	// target := "http://public-firing-range.appspot.com/urldom/index.html"
+	// target := "https://self-signed.badssl.com/"
+	target := "http://public-firing-range.appspot.com/urldom/index.html"
 
 	// Headless runs the browser on foreground, you can also use flag "-rod=show"
 	// Devtools opens the tab in each new tab opened automatically
@@ -35,7 +35,17 @@ func main() {
 		ControlURL(url).
 		Trace(true).
 		// SlowMotion(1 * time.Second).
-		MustConnect()
+		MustConnect().
+		MustIgnoreCertErrors(true)
+
+	router := browser.HijackRequests()
+
+	router.MustAdd("*", func(ctx *rod.Hijack) {
+		fmt.Println("Sent request to: ", ctx.Request.URL())
+		ctx.ContinueRequest(&proto.FetchContinueRequest{})
+	})
+
+	go router.Run()
 
 	// ServeMonitor plays screenshots of each tab. This feature is extremely
 	// useful when debugging with headless mode.
@@ -47,13 +57,6 @@ func main() {
 	crawl(browser, target)
 
 	utils.Pause() // pause goroutine
-}
-
-type rect struct {
-	Left   float64 `json:"left"`
-	Top    float64 `json:"top"`
-	Right  float64 `json:"right"`
-	Bottom float64 `json:"bottom"`
 }
 
 func crawl(browser *rod.Browser, target string) {
@@ -80,11 +83,18 @@ func crawl(browser *rod.Browser, target string) {
 			sRect := rand.Intn(len(elements))
 			e := elements[sRect].Timeout(time.Second * 2)
 			err := e.ScrollIntoView()
-
 			if err != nil {
 				log.Printf("scroll error: %s\n", err.Error())
 				continue
 			}
+			xp, err := e.GetXPath(false)
+
+			if err != nil {
+				log.Printf("xpath error: %s\n", err.Error())
+				continue
+			}
+			fmt.Println("Xpath: ", xp)
+
 			visible, err := e.Visible()
 			if err != nil {
 				log.Printf("visible error: %s\n", err.Error())
