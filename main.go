@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http/httputil"
 	"time"
 
 	"github.com/AlfredBerg/rod-crawler/internal/js"
@@ -16,7 +17,7 @@ import (
 func main() {
 
 	// target := "https://self-signed.badssl.com/"
-	target := "http://public-firing-range.appspot.com/urldom/index.html"
+	target := "https://swisscom.com/"
 
 	// Headless runs the browser on foreground, you can also use flag "-rod=show"
 	// Devtools opens the tab in each new tab opened automatically
@@ -38,11 +39,23 @@ func main() {
 		MustConnect().
 		MustIgnoreCertErrors(true)
 
+	//Don't download files in the browser, e.g. pdf files
+	proto.BrowserSetDownloadBehavior{
+		Behavior:         proto.BrowserSetDownloadBehaviorBehaviorDeny,
+		BrowserContextID: browser.BrowserContextID,
+	}.Call(browser)
+
 	router := browser.HijackRequests()
 
 	router.MustAdd("*", func(ctx *rod.Hijack) {
+		defer ctx.ContinueRequest(&proto.FetchContinueRequest{})
 		fmt.Println("Sent request to: ", ctx.Request.URL())
-		ctx.ContinueRequest(&proto.FetchContinueRequest{})
+		req, err := httputil.DumpRequest(ctx.Request.Req(), true)
+		if err != nil {
+			log.Println("failed capturing request with error: ", err)
+			return
+		}
+		fmt.Println(string(req))
 	})
 
 	go router.Run()
@@ -81,12 +94,13 @@ func crawl(browser *rod.Browser, target string) {
 		}
 		for i := 0; i < 10; i++ {
 			sRect := rand.Intn(len(elements))
-			e := elements[sRect].Timeout(time.Second * 2)
+			e := elements[sRect].Timeout(time.Second * 1)
 			err := e.ScrollIntoView()
 			if err != nil {
 				log.Printf("scroll error: %s\n", err.Error())
 				continue
 			}
+
 			xp, err := e.GetXPath(false)
 
 			if err != nil {
@@ -95,15 +109,6 @@ func crawl(browser *rod.Browser, target string) {
 			}
 			fmt.Println("Xpath: ", xp)
 
-			visible, err := e.Visible()
-			if err != nil {
-				log.Printf("visible error: %s\n", err.Error())
-				continue
-			}
-			if !visible {
-				log.Printf("element is not visible, skipping")
-				continue
-			}
 			err = e.Click(proto.InputMouseButtonLeft, 1)
 			if err != nil {
 				log.Printf("click error: %s\n", err.Error())
