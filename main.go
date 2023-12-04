@@ -92,6 +92,7 @@ func crawl(browser *rod.Browser, target string) {
 		if len(elements) == 0 {
 			break
 		}
+
 		for i := 0; i < 10; i++ {
 			sRect := rand.Intn(len(elements))
 			e := elements[sRect].Timeout(time.Second * 1)
@@ -108,6 +109,19 @@ func crawl(browser *rod.Browser, target string) {
 				continue
 			}
 			fmt.Println("Xpath: ", xp)
+
+			//Is the element actually on top and can be clicked?
+			jsEvalRes, err := page.Eval(js.IS_TOP_VISIBLE, xp)
+
+			if err != nil {
+				log.Printf("visible js error: %s\n", err.Error())
+				continue
+			}
+			isVisible := jsEvalRes.Value
+			log.Printf("visible: %t", isVisible.Bool())
+			if !isVisible.Bool() {
+				continue
+			}
 
 			err = e.Click(proto.InputMouseButtonLeft, 1)
 			if err != nil {
