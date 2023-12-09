@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/AlfredBerg/rod-crawler/internal/js"
+	"github.com/AlfredBerg/rod-crawler/internal/outputHandlers/sqlite"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/go-rod/rod/lib/utils"
 )
 
 func main() {
@@ -45,20 +45,9 @@ func main() {
 		BrowserContextID: browser.BrowserContextID,
 	}.Call(browser)
 
-	router := browser.HijackRequests()
-
-	router.MustAdd("*", func(ctx *rod.Hijack) {
-		defer ctx.ContinueRequest(&proto.FetchContinueRequest{})
-		fmt.Println("Sent request to: ", ctx.Request.URL())
-		req, err := httputil.DumpRequest(ctx.Request.Req(), true)
-		if err != nil {
-			log.Println("failed capturing request with error: ", err)
-			return
-		}
-		fmt.Println(string(req))
-	})
-
-	go router.Run()
+	outputHandler := sqlite.SqliteOutput{Database: "req.db"}
+	outputHandler.Init()
+	defer outputHandler.Cleanup()
 
 	// ServeMonitor plays screenshots of each tab. This feature is extremely
 	// useful when debugging with headless mode.
@@ -67,33 +56,56 @@ func main() {
 
 	defer browser.MustClose()
 
-	crawl(browser, target)
+	crawl(browser, target, time.Minute, &outputHandler)
 
-	utils.Pause() // pause goroutine
+	log.Println("crawling done")
 }
 
-func crawl(browser *rod.Browser, target string) {
+func crawl(browser *rod.Browser, target string, crawlTimeout time.Duration, outputHandler *sqlite.SqliteOutput) {
+	// Create a new empty page so we can setup request hijacks
+	page := browser.Timeout(crawlTimeout).MustPage()
+	defer page.Close()
 
-	// Create a new page
-	page := browser.MustPage(target).MustWaitStable()
+	router := page.HijackRequests()
+	router.MustAdd("*", func(ctx *rod.Hijack) {
+		defer ctx.ContinueRequest(&proto.FetchContinueRequest{})
+		req, err := httputil.DumpRequest(ctx.Request.Req(), true)
+		if err != nil {
+			log.Println("failed capturing request with error: ", err)
+			return
+		}
+		info, err := page.Info()
+		if err != nil {
+			log.Println("failed getting page info with error: ", err)
+			return
+		}
 
-	// rects := []rect{}
-	// result := page.MustEval(js.HIGHLIGHT_CLICKABLE).String()
-	// json.Unmarshal([]byte(result), &rects)
-	// fmt.Println(rects)
+		outputHandler.HandleRequest(info.URL, ctx.Request.Req().Method, ctx.Request.Body(), ctx.Request.URL().String(),
+			ctx.Request.URL().Path, string(req), ctx.Request.URL().Hostname(), ctx.Request.Req().Header)
+	})
+	go router.Run()
 
-	// fmt.Println(r)
+	page.MustNavigate(target).MustWaitStable()
+
 	for i := 0; i < 400; i++ {
+		//Is the context canceled?
+		if page.GetContext().Err() != nil {
+			break
+		}
+
 		err := page.Timeout(time.Second * 5).WaitStable(time.Second)
 		if err != nil {
 			log.Printf("wait stable errored out due to: %s\n", err.Error())
 		}
-		elements := page.MustElementsByJS(js.GET_ELEMENTS)
+		elements, err := page.ElementsByJS(rod.Eval(js.GET_ELEMENTS))
+		if err != nil {
+			log.Printf("get elements errored out due to: %s\n", err.Error())
+		}
 		if len(elements) == 0 {
 			break
 		}
 
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 100; i++ {
 			sRect := rand.Intn(len(elements))
 			e := elements[sRect].Timeout(time.Second * 1)
 			err := e.ScrollIntoView()
@@ -130,9 +142,5 @@ func crawl(browser *rod.Browser, target string) {
 			}
 			break
 		}
-
 	}
-	fmt.Println("Nothing more to do")
-
-	// fmt.Println(text)
 }
