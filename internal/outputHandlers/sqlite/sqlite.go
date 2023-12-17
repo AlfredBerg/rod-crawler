@@ -74,7 +74,7 @@ func (o *SqliteOutput) HandleRequest(origin, method, body, url, path, raw, host 
 	if err != nil {
 		return err
 	}
-	log.Println(string(rjson))
+	// log.Println(string(rjson))
 
 	o.reqChan <- string(rjson)
 
