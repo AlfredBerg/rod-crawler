@@ -27,7 +27,7 @@ func (o *SqliteOutput) Init() {
 	}
 	o.db = db
 
-	createReq := "create table requests (id integer not null primary key, request text);"
+	createReq := "CREATE TABLE IF NOT EXISTS requests (id integer not null primary key, request text);"
 
 	_, err = db.Exec(createReq)
 	if err != nil {

@@ -8,3 +8,4 @@ Most common hosts
 
 
 # TODO
+* Only do active crawling if url is in scope

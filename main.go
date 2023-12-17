@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http/httputil"
+	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/AlfredBerg/rod-crawler/internal/js"
@@ -17,7 +21,9 @@ import (
 func main() {
 
 	// target := "https://self-signed.badssl.com/"
-	target := "https://swisscom.com/"
+	inFile := "targets.txt"
+	concurrency := 2
+	perCrawltargetTimeout := time.Second * 60
 
 	// Headless runs the browser on foreground, you can also use flag "-rod=show"
 	// Devtools opens the tab in each new tab opened automatically
@@ -56,9 +62,42 @@ func main() {
 
 	defer browser.MustClose()
 
-	crawl(browser, target, time.Minute, &outputHandler)
+	targets := make(chan string)
+	go func() {
+		var sc *bufio.Scanner
+		if inFile == "" {
+			sc = bufio.NewScanner(os.Stdin)
+		} else {
+			f, err := os.Open(inFile)
+			if err != nil {
+				panic(err)
+			}
+			sc = bufio.NewScanner(f)
+		}
+		for sc.Scan() {
+			target := strings.ToLower(sc.Text())
+			targets <- target
+		}
+		if sc.Err() != nil {
+			panic(sc.Err())
+		}
+		close(targets)
+	}()
 
-	log.Println("crawling done")
+	wg := sync.WaitGroup{}
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			for target := range targets {
+				crawl(browser, target, perCrawltargetTimeout, &outputHandler)
+			}
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	log.Printf("all crawling done")
 }
 
 func crawl(browser *rod.Browser, target string, crawlTimeout time.Duration, outputHandler *sqlite.SqliteOutput) {
@@ -85,7 +124,11 @@ func crawl(browser *rod.Browser, target string, crawlTimeout time.Duration, outp
 	})
 	go router.Run()
 
-	page.MustNavigate(target).MustWaitStable()
+	err := page.Timeout(time.Second * 5).Navigate(target)
+	if err != nil {
+		log.Printf("could not navigate to the initial page %s, crawling ended early", target)
+		return
+	}
 
 	for i := 0; i < 400; i++ {
 		//Is the context canceled?
@@ -143,4 +186,5 @@ func crawl(browser *rod.Browser, target string, crawlTimeout time.Duration, outp
 			break
 		}
 	}
+	log.Printf("crawling done for %s", target)
 }
