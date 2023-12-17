@@ -84,29 +84,70 @@ var rootCmd = &cobra.Command{
 func crawler() {
 	// Headless runs the browser on foreground, you can also use flag "-rod=show"
 	// Devtools opens the tab in each new tab opened automatically
-	l := launcher.New().
-		Headless(false).
-		Devtools(true)
 
-	defer l.Cleanup()
+	bPool := rod.NewBrowserPool(flags.concurrency)
+	fCreateBrowser := func() *rod.Browser {
+		l := launcher.New().
+			Headless(false).
+			Devtools(true)
+		url := l.MustLaunch()
+		go l.Cleanup()
 
-	url := l.MustLaunch()
+		// Trace shows verbose debug information for each action executed
+		// SlowMotion is a debug related function that waits 2 seconds between
+		// each action, making it easier to inspect what your code is doing.
+		browser := rod.New().
+			ControlURL(url).
+			//Trace(true).
+			//SlowMotion(1 * time.Second).
+			MustConnect().
+			MustIgnoreCertErrors(true)
 
-	// Trace shows verbose debug information for each action executed
-	// SlowMotion is a debug related function that waits 2 seconds between
-	// each action, making it easier to inspect what your code is doing.
-	browser := rod.New().
-		ControlURL(url).
-		//Trace(true).
-		//SlowMotion(1 * time.Second).
-		MustConnect().
-		MustIgnoreCertErrors(true)
+		//Don't download files in the browser, e.g. pdf files
+		proto.BrowserSetDownloadBehavior{
+			Behavior:         proto.BrowserSetDownloadBehaviorBehaviorDeny,
+			BrowserContextID: browser.BrowserContextID,
+		}.Call(browser)
 
-	//Don't download files in the browser, e.g. pdf files
-	proto.BrowserSetDownloadBehavior{
-		Behavior:         proto.BrowserSetDownloadBehaviorBehaviorDeny,
-		BrowserContextID: browser.BrowserContextID,
-	}.Call(browser)
+		//Avoid alerts and close tabs
+		go browser.EachEvent(func(e *proto.PageJavascriptDialogOpening) {
+			_ = proto.PageHandleJavaScriptDialog{Accept: false, PromptText: ""}.Call(browser)
+		}, func(e *proto.PageWindowOpen) {
+			log.Printf("new window opened, trying to close it: %s", e.URL)
+			time.Sleep(time.Millisecond * 500)
+			pages, err := browser.Pages()
+			if err != nil {
+				log.Printf("failed getting pages in windows closer: %s", err)
+				return
+			}
+			for _, page := range pages {
+				info, err := page.Info()
+				if err != nil {
+					log.Printf("failed getting page info in windows closer: %s", err)
+					return
+				}
+				if info.URL == e.URL {
+					err = page.Close()
+					if err != nil {
+						log.Printf("failed closing page info in windows closer: %s", err)
+						return
+					}
+				}
+			}
+		})()
+
+		// go func() {
+		// 	for event := range browser.Event() {
+		// 		log.Printf("event: %s", event.Method)
+		// 	}
+		// }()
+
+		return browser
+	}
+
+	defer bPool.Cleanup(func(browser *rod.Browser) {
+		browser.MustClose()
+	})
 
 	outputHandler := sqlite.SqliteOutput{Database: "req.db"}
 	outputHandler.Init()
@@ -115,9 +156,7 @@ func crawler() {
 	// ServeMonitor plays screenshots of each tab. This feature is extremely
 	// useful when debugging with headless mode.
 	// You can also enable it with flag "-rod=monitor"
-	launcher.Open(browser.ServeMonitor(""))
-
-	defer browser.MustClose()
+	// launcher.Open(browser.ServeMonitor(""))
 
 	targets := make(chan string)
 	go func() {
@@ -146,9 +185,11 @@ func crawler() {
 		wg.Add(1)
 		go func() {
 			for target := range targets {
+				browser := bPool.Get(fCreateBrowser)
 				j := crawl.Job{Browser: browser, Target: target, Scope: flags.scope,
 					CrawlTimeout: time.Second * time.Duration(flags.perCrawltargetTimeout), OutputHandler: &outputHandler}
 				j.Crawl()
+				bPool.Put(browser)
 			}
 			wg.Done()
 		}()
