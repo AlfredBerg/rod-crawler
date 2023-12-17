@@ -8,4 +8,5 @@ Most common hosts
 
 
 # TODO  
-* Only do active crawling if url is in scope  
+* Only press each element once  
+* Make concurrency work (use browsers instead of tabs)  
