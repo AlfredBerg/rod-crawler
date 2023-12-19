@@ -9,3 +9,4 @@ Most common hosts
 
 # TODO  
 * Capture the requests in new tabs as well 
+* Have a set of js quick win bookmarklets (e.g. parameter pollution)  
