@@ -15,4 +15,6 @@ type Job struct {
 
 	//The current browser url of the page being crawled must match one of these or a subdomain of them
 	Scope []string
+
+	clickedElements map[string]int
 }

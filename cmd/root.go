@@ -24,6 +24,7 @@ type crawlFlags struct {
 	targets               string
 	concurrency           int
 	perCrawltargetTimeout int
+	debug                 bool
 
 	scope []string
 }
@@ -43,6 +44,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&flags.targets, "target", "t", "", "A file containing the urls to crawl. If empty stdin is used.")
 	rootCmd.Flags().IntVarP(&flags.concurrency, "concurrency", "c", 2, "The number of browsers to be used for crawling at the same time.")
 	rootCmd.Flags().IntVar(&flags.perCrawltargetTimeout, "timeout", 60, "The maximum amount of time in seconds to spend on one crawling target.")
+	rootCmd.Flags().BoolVarP(&flags.debug, "debug", "d", false, "If specified the browser will not run in headless and auto open devtools.")
 
 	rootCmd.Flags().StringSliceVarP(&flags.scope, "scope", "s", nil, "The current browser url of the page being crawled must match one of these or a subdomain of them. "+
 		"E.g. example.com matches example.com and all subdomains to example.com. This argument can be specified multiple times")
@@ -88,8 +90,8 @@ func crawler() {
 	bPool := rod.NewBrowserPool(flags.concurrency)
 	fCreateBrowser := func() *rod.Browser {
 		l := launcher.New().
-			Headless(false).
-			Devtools(true)
+			Headless(!flags.debug).
+			Devtools(flags.debug)
 		url := l.MustLaunch()
 		go l.Cleanup()
 
@@ -191,6 +193,19 @@ func crawler() {
 				j := crawl.Job{Browser: browser, Target: target, Scope: flags.scope,
 					CrawlTimeout: time.Second * time.Duration(flags.perCrawltargetTimeout), OutputHandler: &outputHandler}
 				j.Crawl()
+				//Cleanup tabs in the browser for the next user
+				pages, err := browser.Pages()
+				//Keep a blank page to not close the browser
+				browser.Page(proto.TargetCreateTarget{URL: ""})
+				if err != nil {
+					log.Printf("failed getting pages to cleanup tabs: %s", err)
+					bPool.Put(fCreateBrowser())
+					continue
+				}
+				for _, p := range pages {
+					p.Close()
+				}
+
 				bPool.Put(browser)
 			}
 			wg.Done()

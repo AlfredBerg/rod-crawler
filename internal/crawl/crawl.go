@@ -15,6 +15,8 @@ import (
 )
 
 func (j *Job) Crawl() {
+	j.clickedElements = make(map[string]int)
+
 	// Create a new empty page so we can setup request hijacks
 	page := j.Browser.Timeout(j.CrawlTimeout).MustPage()
 	defer page.Close()
@@ -118,6 +120,7 @@ func (j *Job) Crawl() {
 			log.Printf("get elements errored out due to: %s", err.Error())
 			continue
 		}
+		elements = filterNonClickedElements(elements, j.clickedElements)
 		if len(elements) == 0 {
 			break
 		}
@@ -146,12 +149,15 @@ func (j *Job) Crawl() {
 			}
 
 			xp, err := e.GetXPath(false)
-
 			if err != nil {
 				log.Printf("xpath error: %s\n", err.Error())
 				continue
 			}
-			fmt.Println("Xpath: ", xp)
+
+			if j.clickedElements[xp] != 0 {
+				fmt.Println("xpath element has already been clicked: ", xp)
+				continue
+			}
 
 			//Is the element actually on top and can be clicked?
 			jsEvalRes, err := page.Eval(js.IS_TOP_VISIBLE, xp)
@@ -171,8 +177,27 @@ func (j *Job) Crawl() {
 				log.Printf("click error: %s\n", err.Error())
 				continue
 			}
+			fmt.Println("clicked xpath: ", xp)
+			j.clickedElements[xp] += 1
 			break
 		}
 	}
 	log.Printf("crawling done for %s", j.Target)
+}
+
+func filterNonClickedElements(elements rod.Elements, clickedElements map[string]int) rod.Elements {
+	notClickedElements := rod.Elements{}
+
+	for _, e := range elements {
+		xp, err := e.GetXPath(false)
+		if err != nil {
+			log.Printf("failed getting xpath: %s", err.Error())
+			continue
+		}
+		if clickedElements[xp] == 0 {
+			notClickedElements = append(notClickedElements, e)
+		}
+	}
+
+	return notClickedElements
 }

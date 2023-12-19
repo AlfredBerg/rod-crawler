@@ -8,5 +8,4 @@ Most common hosts
 
 
 # TODO  
-* Only press each element once  
-* Make concurrency work (use browsers instead of tabs)  
+* Capture the requests in new tabs as well 
