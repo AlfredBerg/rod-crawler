@@ -112,29 +112,31 @@ func crawler() {
 		//Avoid alerts and close tabs
 		go browser.EachEvent(func(e *proto.PageJavascriptDialogOpening) {
 			_ = proto.PageHandleJavaScriptDialog{Accept: false, PromptText: ""}.Call(browser)
-		}, func(e *proto.PageWindowOpen) {
-			log.Printf("new window opened, trying to close it: %s", e.URL)
-			time.Sleep(time.Millisecond * 500)
-			pages, err := browser.Pages()
-			if err != nil {
-				log.Printf("failed getting pages in windows closer: %s", err)
-				return
-			}
-			for _, page := range pages {
-				info, err := page.Info()
+		},
+			func(e *proto.PageWindowOpen) {
+				log.Printf("new window opened, trying to close it: %s", e.URL)
+				time.Sleep(time.Millisecond * 500)
+				pages, err := browser.Pages()
 				if err != nil {
-					log.Printf("failed getting page info in windows closer: %s", err)
+					log.Printf("failed getting pages in tab closer: %s", err)
 					return
 				}
-				if info.URL == e.URL {
-					err = page.Close()
+				for _, page := range pages {
+					info, err := page.Info()
 					if err != nil {
-						log.Printf("failed closing page info in windows closer: %s", err)
+						log.Printf("failed getting page info in tab closer: %s", err)
 						return
 					}
+					if info.URL == e.URL {
+						err = page.Close()
+						if err != nil {
+							log.Printf("failed closing page info in tab closer: %s", err)
+							return
+						}
+					}
 				}
-			}
-		})()
+			},
+		)()
 
 		// go func() {
 		// 	for event := range browser.Event() {

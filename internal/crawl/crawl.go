@@ -38,6 +38,19 @@ func (j *Job) Crawl() {
 	})
 	go router.Run()
 
+	//Keep focus on tab
+	go func() {
+		t := time.NewTicker(time.Second * 2)
+
+		for range t.C {
+			_, err := page.Activate()
+			if err != nil {
+				log.Printf("failed focusing tab, err %s", err)
+				return
+			}
+		}
+	}()
+
 	err := page.Timeout(time.Second * 5).Navigate(j.Target)
 	if err != nil {
 		log.Printf("could not navigate to the initial page %s, crawling ended early", j.Target)
