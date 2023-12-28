@@ -1,9 +1,11 @@
 package crawl
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
@@ -12,31 +14,55 @@ import (
 	"github.com/AlfredBerg/rod-crawler/internal/js"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
+	"github.com/google/uuid"
 )
 
-func (j *Job) Crawl() {
+func (j *Job) Crawl(saveResponses bool) {
 	j.clickedElements = make(map[string]int)
 
 	// Create a new empty page so we can setup request hijacks
 	page := j.Browser.Timeout(j.CrawlTimeout).MustPage()
 	defer page.Close()
 
+	//Set InsecureSkipVerify as we want to be able to crawl pages with bad certificates
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 	router := page.HijackRequests()
 	router.MustAdd("*", func(ctx *rod.Hijack) {
-		defer ctx.ContinueRequest(&proto.FetchContinueRequest{})
 		req, err := httputil.DumpRequest(ctx.Request.Req(), true)
 		if err != nil {
 			log.Println("failed capturing request with error: ", err)
+			ctx.ContinueRequest(&proto.FetchContinueRequest{})
 			return
 		}
 		info, err := page.Info()
 		if err != nil {
 			log.Println("failed getting page info with error: ", err)
+			ctx.ContinueRequest(&proto.FetchContinueRequest{})
 			return
 		}
 
-		j.OutputHandler.HandleRequest(info.URL, ctx.Request.Req().Method, ctx.Request.Body(), ctx.Request.URL().String(),
+		transactionUuid := uuid.New().String()
+
+		j.OutputHandler.HandleRequest(transactionUuid, info.URL, ctx.Request.Req().Method, ctx.Request.Body(), ctx.Request.URL().String(),
 			ctx.Request.URL().Path, string(req), ctx.Request.URL().Hostname(), ctx.Request.Req().Header)
+
+		if !saveResponses {
+			ctx.ContinueRequest(&proto.FetchContinueRequest{})
+			return
+		}
+
+		err = ctx.LoadResponse(client, true)
+		if err != nil {
+			log.Println("failed loading responses with error: ", err)
+			ctx.ContinueRequest(&proto.FetchContinueRequest{})
+			return
+		}
+
+		j.OutputHandler.HandleResponse(transactionUuid, ctx.Response.Body(), ctx.Response.Payload().ResponsePhrase, ctx.Response.Payload().ResponseCode, ctx.Response.Headers())
+
 	})
 	go router.Run()
 
@@ -100,6 +126,7 @@ func (j *Job) Crawl() {
 			log.Printf("wait stable errored out due to: %s\n", err.Error())
 		}
 
+		//TOOD: This should be some seperate table in the db, not shoehorned into the request table
 		paramUrlRes, err := page.Eval(js.GET_POTENTIAL_PARAMS)
 		if err != nil {
 			log.Printf("error getting parameters: %s", err.Error())
@@ -110,7 +137,7 @@ func (j *Job) Crawl() {
 				if err != nil {
 					log.Printf("failed parsing parameter extraction url %s: %s", paramUrl, err.Error())
 				} else {
-					j.OutputHandler.HandleRequest(info.URL, "GET", "", paramUrl, url.Path, "", url.Hostname(), nil)
+					j.OutputHandler.HandleRequest("", info.URL, "GET", "", paramUrl, url.Path, "", url.Hostname(), nil)
 				}
 			}
 		}

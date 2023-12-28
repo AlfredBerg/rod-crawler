@@ -10,3 +10,7 @@ Most common hosts
 # TODO  
 * Capture the requests in new tabs as well 
 * Have a set of js quick win bookmarklets (e.g. parameter pollution)  
+
+* ~~Option to save responses~~
+
+* Logger with different levels (zap?)

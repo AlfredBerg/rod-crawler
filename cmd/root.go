@@ -16,6 +16,7 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"go.uber.org/zap"
 )
 
 var cfgFile string
@@ -25,6 +26,8 @@ type crawlFlags struct {
 	concurrency           int
 	perCrawltargetTimeout int
 	debug                 bool
+
+	saveResponses bool
 
 	scope []string
 }
@@ -45,9 +48,15 @@ func init() {
 	rootCmd.Flags().IntVarP(&flags.concurrency, "concurrency", "c", 2, "The number of browsers to be used for crawling at the same time.")
 	rootCmd.Flags().IntVar(&flags.perCrawltargetTimeout, "timeout", 60, "The maximum amount of time in seconds to spend on one crawling target.")
 	rootCmd.Flags().BoolVarP(&flags.debug, "debug", "d", false, "If specified the browser will not run in headless and auto open devtools.")
+	rootCmd.Flags().BoolVarP(&flags.saveResponses, "save-responses", "r", false, "If specified the HTTP responses will be saved when crawling.")
 
 	rootCmd.Flags().StringSliceVarP(&flags.scope, "scope", "s", nil, "The current browser url of the page being crawled must match one of these or a subdomain of them. "+
 		"E.g. example.com matches example.com and all subdomains to example.com. This argument can be specified multiple times")
+
+	c := zap.NewDevelopmentConfig()
+	logger := zap.Must(c.Build())
+	defer logger.Sync()
+	zap.ReplaceGlobals(logger)
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -192,7 +201,7 @@ func crawler() {
 				browser := bPool.Get(fCreateBrowser)
 				j := crawl.Job{Browser: browser, Target: target, Scope: flags.scope,
 					CrawlTimeout: time.Second * time.Duration(flags.perCrawltargetTimeout), OutputHandler: &outputHandler}
-				j.Crawl()
+				j.Crawl(flags.saveResponses)
 				//Cleanup tabs in the browser for the next user
 				pages, err := browser.Pages()
 				//Keep a blank page to not close the browser
