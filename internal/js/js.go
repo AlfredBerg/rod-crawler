@@ -94,6 +94,8 @@ var IS_TOP_VISIBLE string = `
 (xpath) => {
     element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
 
+    if (element == null) return false;
+
     if (element.offsetWidth === 0 || element.offsetHeight === 0) return false;
     var rects = element.getClientRects(),
         on_top = function (r) {

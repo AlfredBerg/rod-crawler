@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var cfgFile string
@@ -26,6 +27,7 @@ type crawlFlags struct {
 	concurrency           int
 	perCrawltargetTimeout int
 	debug                 bool
+	logLevel              logLevel
 
 	saveResponses bool
 
@@ -33,6 +35,35 @@ type crawlFlags struct {
 }
 
 var flags crawlFlags
+
+type logLevel string
+
+const (
+	debug      logLevel = "debug"
+	info       logLevel = "info"
+	warn       logLevel = "warn"
+	errorLevel logLevel = "error"
+)
+
+// String is used both by fmt.Print and by Cobra in help text
+func (e *logLevel) String() string {
+	return string(*e)
+}
+
+// Set must have pointer receiver so it doesn't change the value of a copy
+func (e *logLevel) Set(v string) error {
+	switch v {
+	case "debug", "info", "warn", "error":
+		*e = logLevel(v)
+		return nil
+	default:
+		return errors.New(`must be one of "debug", "info", "warn" or "error"`)
+	}
+}
+
+func (e *logLevel) Type() string {
+	return "logLevel"
+}
 
 func Execute() error {
 	return rootCmd.Execute()
@@ -49,14 +80,9 @@ func init() {
 	rootCmd.Flags().IntVar(&flags.perCrawltargetTimeout, "timeout", 60, "The maximum amount of time in seconds to spend on one crawling target.")
 	rootCmd.Flags().BoolVarP(&flags.debug, "debug", "d", false, "If specified the browser will not run in headless and auto open devtools.")
 	rootCmd.Flags().BoolVarP(&flags.saveResponses, "save-responses", "r", false, "If specified the HTTP responses will be saved when crawling.")
-
+	rootCmd.Flags().Var(&flags.logLevel, "log-level", "Minimum log level to output. Valid values: debug, info, warn, error.")
 	rootCmd.Flags().StringSliceVarP(&flags.scope, "scope", "s", nil, "The current browser url of the page being crawled must match one of these or a subdomain of them. "+
 		"E.g. example.com matches example.com and all subdomains to example.com. This argument can be specified multiple times")
-
-	c := zap.NewDevelopmentConfig()
-	logger := zap.Must(c.Build())
-	defer logger.Sync()
-	zap.ReplaceGlobals(logger)
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -93,6 +119,26 @@ var rootCmd = &cobra.Command{
 }
 
 func crawler() {
+	//Setup logger
+	c := zap.NewDevelopmentConfig()
+	var level zapcore.Level
+	switch flags.logLevel {
+	case debug:
+		level = zapcore.DebugLevel
+	case info:
+		level = zapcore.InfoLevel
+	case warn:
+		level = zapcore.WarnLevel
+	case errorLevel:
+		level = zapcore.ErrorLevel
+	default:
+		level = zapcore.InfoLevel
+	}
+	c.Level.SetLevel(level)
+	logger := zap.Must(c.Build())
+	defer logger.Sync()
+	zap.ReplaceGlobals(logger)
+
 	// Headless runs the browser on foreground, you can also use flag "-rod=show"
 	// Devtools opens the tab in each new tab opened automatically
 
@@ -125,23 +171,23 @@ func crawler() {
 			_ = proto.PageHandleJavaScriptDialog{Accept: false, PromptText: ""}.Call(browser)
 		},
 			func(e *proto.PageWindowOpen) {
-				log.Printf("new window opened, trying to close it: %s", e.URL)
+				zap.L().Info("new tab opened, trying to close it", zap.String("url", e.URL))
 				time.Sleep(time.Millisecond * 500)
 				pages, err := browser.Pages()
 				if err != nil {
-					log.Printf("failed getting pages in tab closer: %s", err)
+					zap.L().Error("failed getting pages in tab closer", zap.Error(err))
 					return
 				}
 				for _, page := range pages {
 					info, err := page.Info()
 					if err != nil {
-						log.Printf("failed getting page info in tab closer: %s", err)
+						zap.L().Error("failed getting page info in tab closer", zap.Error(err))
 						return
 					}
 					if info.URL == e.URL {
 						err = page.Close()
 						if err != nil {
-							log.Printf("failed closing page info in tab closer: %s", err)
+							zap.L().Error("failed closing page in tab closer", zap.Error(err))
 							return
 						}
 					}
@@ -207,7 +253,7 @@ func crawler() {
 				//Keep a blank page to not close the browser
 				browser.Page(proto.TargetCreateTarget{URL: ""})
 				if err != nil {
-					log.Printf("failed getting pages to cleanup tabs: %s", err)
+					zap.L().Error("failed getting pages to cleanup tabs", zap.Error(err))
 					bPool.Put(fCreateBrowser())
 					continue
 				}
@@ -222,5 +268,5 @@ func crawler() {
 	}
 	wg.Wait()
 
-	log.Printf("all crawling done")
+	zap.L().Info("all crawling done")
 }

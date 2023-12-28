@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
+	"go.uber.org/zap"
 )
 
 type SqliteOutput struct {
@@ -50,7 +51,7 @@ func (o *SqliteOutput) Init() {
 			_, err = db.Exec(insertReq, r)
 			o.dbLock.Unlock()
 			if err != nil {
-				log.Printf("failed to insert request %q: %s\n", err, insertReq)
+				zap.L().Error("failed to insert request", zap.Error(err), zap.String("insert", insertReq))
 				return
 			}
 		}
@@ -72,7 +73,7 @@ func (o *SqliteOutput) Init() {
 			_, err = db.Exec(insertRes, r)
 			o.dbLock.Unlock()
 			if err != nil {
-				log.Printf("failed to insert response %q: %s\n", err, insertRes)
+				zap.L().Error("failed to insert response", zap.Error(err), zap.String("insert", insertRes))
 				return
 			}
 		}

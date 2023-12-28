@@ -2,8 +2,6 @@ package crawl
 
 import (
 	"crypto/tls"
-	"fmt"
-	"log"
 	"math/rand"
 	"net/http"
 	"net/http/httputil"
@@ -15,6 +13,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 func (j *Job) Crawl(saveResponses bool) {
@@ -33,13 +32,13 @@ func (j *Job) Crawl(saveResponses bool) {
 	router.MustAdd("*", func(ctx *rod.Hijack) {
 		req, err := httputil.DumpRequest(ctx.Request.Req(), true)
 		if err != nil {
-			log.Println("failed capturing request with error: ", err)
+			zap.L().Error("failed capturing request with error", zap.Error(err))
 			ctx.ContinueRequest(&proto.FetchContinueRequest{})
 			return
 		}
 		info, err := page.Info()
 		if err != nil {
-			log.Println("failed getting page info with error: ", err)
+			zap.L().Error("failed getting page info with error", zap.Error(err))
 			ctx.ContinueRequest(&proto.FetchContinueRequest{})
 			return
 		}
@@ -56,7 +55,7 @@ func (j *Job) Crawl(saveResponses bool) {
 
 		err = ctx.LoadResponse(client, true)
 		if err != nil {
-			log.Println("failed loading responses with error: ", err)
+			zap.L().Error("failed loading responses with error", zap.Error(err))
 			ctx.ContinueRequest(&proto.FetchContinueRequest{})
 			return
 		}
@@ -73,7 +72,7 @@ func (j *Job) Crawl(saveResponses bool) {
 		for range t.C {
 			_, err := page.Activate()
 			if err != nil {
-				log.Printf("failed focusing tab, err %s", err)
+				zap.L().Error("failed focusing tab,", zap.Error(err))
 				return
 			}
 		}
@@ -81,7 +80,7 @@ func (j *Job) Crawl(saveResponses bool) {
 
 	err := page.Timeout(time.Second * 5).Navigate(j.Target)
 	if err != nil {
-		log.Printf("could not navigate to the initial page %s, crawling ended early", j.Target)
+		zap.L().Error("could not navigate to the initial page, crawling ended early", zap.String("target", j.Target))
 		return
 	}
 
@@ -93,12 +92,12 @@ func (j *Job) Crawl(saveResponses bool) {
 
 		info, err := page.Info()
 		if err != nil {
-			log.Printf("page info errored out due to: %s\n", err.Error())
+			zap.L().Error("page info errored out due to", zap.Error(err))
 		}
 
 		currentUrl, err := url.Parse(info.URL)
 		if err != nil {
-			log.Printf("could not parse url %s: %s\n", info.URL, err.Error())
+			zap.L().Error("could not parse url", zap.Error(err), zap.String("url", info.URL))
 		}
 
 		//Are we in scope?
@@ -116,26 +115,26 @@ func (j *Job) Crawl(saveResponses bool) {
 				}
 			}
 			if !inScope {
-				log.Printf("crawler went out of scope, stopping crawl: %s", currentUrl)
+				zap.L().Info("crawler went out of scope, stopping crawl", zap.String("url", currentUrl.String()))
 				break
 			}
 		}
 
 		err = page.Timeout(time.Second * 5).WaitStable(time.Second)
 		if err != nil {
-			log.Printf("wait stable errored out due to: %s\n", err.Error())
+			zap.L().Error("wait stable errored out due to", zap.Error(err))
 		}
 
 		//TOOD: This should be some seperate table in the db, not shoehorned into the request table
 		paramUrlRes, err := page.Eval(js.GET_POTENTIAL_PARAMS)
 		if err != nil {
-			log.Printf("error getting parameters: %s", err.Error())
+			zap.L().Error("error getting parameters", zap.Error(err))
 		} else {
 			paramUrl := paramUrlRes.Value.Str()
 			if paramUrl != "" {
 				url, err := url.Parse(paramUrl)
 				if err != nil {
-					log.Printf("failed parsing parameter extraction url %s: %s", paramUrl, err.Error())
+					zap.L().Error("failed parsing parameter extraction url", zap.Error(err), zap.String("url", paramUrl))
 				} else {
 					j.OutputHandler.HandleRequest("", info.URL, "GET", "", paramUrl, url.Path, "", url.Hostname(), nil)
 				}
@@ -144,7 +143,7 @@ func (j *Job) Crawl(saveResponses bool) {
 
 		elements, err := page.ElementsByJS(rod.Eval(js.GET_ELEMENTS))
 		if err != nil {
-			log.Printf("get elements errored out due to: %s", err.Error())
+			zap.L().Error("get elements errored out due to", zap.Error(err))
 			continue
 		}
 		elements = filterNonClickedElements(elements, j.clickedElements)
@@ -160,7 +159,7 @@ func (j *Job) Crawl(saveResponses bool) {
 
 			interactUrl, err := url.Parse(info.URL)
 			if err != nil {
-				log.Printf("could not parse interact url %s: %s\n", info.URL, err.Error())
+				zap.L().Error("could not parse interact url", zap.Error(err), zap.String("url", info.URL))
 			}
 			// The url has changed, we should run the js to get new clickable elements again and check that we are still in scope
 			if currentUrl.String() != interactUrl.String() {
@@ -171,45 +170,45 @@ func (j *Job) Crawl(saveResponses bool) {
 			e := elements[sRect].Timeout(time.Second * 1)
 			err = e.ScrollIntoView()
 			if err != nil {
-				log.Printf("scroll error: %s\n", err.Error())
+				zap.L().Error("scroll error", zap.Error(err))
 				continue
 			}
 
 			xp, err := e.GetXPath(false)
 			if err != nil {
-				log.Printf("xpath error: %s\n", err.Error())
+				zap.L().Error("xapth error", zap.Error(err))
 				continue
 			}
 
 			if j.clickedElements[xp] != 0 {
-				fmt.Println("xpath element has already been clicked: ", xp)
+				zap.L().Debug("xpath element has already been clicked", zap.String("xpath", xp))
 				continue
 			}
 
 			//Is the element actually on top and can be clicked?
 			jsEvalRes, err := page.Eval(js.IS_TOP_VISIBLE, xp)
-
 			if err != nil {
-				log.Printf("visible js error: %s\n", err.Error())
+				zap.L().Error("visible js error", zap.Error(err))
 				continue
 			}
 			isVisible := jsEvalRes.Value
-			log.Printf("visible: %t", isVisible.Bool())
+
+			zap.L().Debug("visibility of xpath", zap.Bool("isVisible", isVisible.Bool()), zap.String("xpath", xp))
 			if !isVisible.Bool() {
 				continue
 			}
 
 			err = e.Click(proto.InputMouseButtonLeft, 1)
 			if err != nil {
-				log.Printf("click error: %s\n", err.Error())
+				zap.L().Error("cick failed", zap.Error(err))
 				continue
 			}
-			fmt.Println("clicked xpath: ", xp)
+			zap.L().Info("clicked", zap.String("xpath", xp))
 			j.clickedElements[xp] += 1
 			break
 		}
 	}
-	log.Printf("crawling done for %s", j.Target)
+	zap.L().Info("crawling done for", zap.String("target", j.Target))
 }
 
 func filterNonClickedElements(elements rod.Elements, clickedElements map[string]int) rod.Elements {
@@ -218,7 +217,7 @@ func filterNonClickedElements(elements rod.Elements, clickedElements map[string]
 	for _, e := range elements {
 		xp, err := e.GetXPath(false)
 		if err != nil {
-			log.Printf("failed getting xpath: %s", err.Error())
+			zap.L().Error("failed getting xpath", zap.Error(err))
 			continue
 		}
 		if clickedElements[xp] == 0 {
