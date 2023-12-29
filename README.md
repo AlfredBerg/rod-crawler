@@ -13,4 +13,4 @@ Most common hosts
 
 * ~~Option to save responses~~
 
-* Logger with different levels (zap?)
+* ~~Logger with different levels (zap?)~~
